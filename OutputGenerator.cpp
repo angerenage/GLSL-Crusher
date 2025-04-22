@@ -11,7 +11,7 @@ static constexpr std::string_view getShaderSourceFromFileSrc = R"(static void de
 		unsigned char c = (unsigned char)compressedText[readPos];
 
 		if (c == '$') {
-			if (readPos + 2 < MAX_OUTPUT_SIZE) {
+			if (readPos - offset + 2 < MAX_OUTPUT_SIZE) {
 				uint16_t tokenOffset = *((uint16_t*)&compressedText[readPos + 1]);
 				readPos += 2;
 
@@ -28,7 +28,7 @@ static constexpr std::string_view getShaderSourceFromFileSrc = R"(static void de
 				return;
 			}
 		}
-		else if (c >= 128 && c <= 255) {
+		else if (c >= 128) {
 			size_t tokenLength = strlen(tokens[c - 128]);
 			if (*write_pos + tokenLength >= MAX_OUTPUT_SIZE) {
 				fprintf(stderr, "Error: Output buffer overflow\n");
