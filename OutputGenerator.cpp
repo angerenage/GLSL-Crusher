@@ -11,7 +11,7 @@ static constexpr std::string_view getShaderSourceFromFileSrc = R"(static void de
 		unsigned char c = (unsigned char)compressedText[readPos];
 
 		if (c == '$') {
-			if (readPos + 2 < MAX_OUTPUT_SIZE) {
+			if (readPos - offset + 2 < MAX_OUTPUT_SIZE) {
 				uint16_t tokenOffset = *((uint16_t*)&compressedText[readPos + 1]);
 				readPos += 2;
 
@@ -28,7 +28,7 @@ static constexpr std::string_view getShaderSourceFromFileSrc = R"(static void de
 				return;
 			}
 		}
-		else if (c >= 128 && c <= 255) {
+		else if (c >= 128) {
 			size_t tokenLength = strlen(tokens[c - 128]);
 			if (*write_pos + tokenLength >= MAX_OUTPUT_SIZE) {
 				fprintf(stderr, "Error: Output buffer overflow\n");
@@ -77,8 +77,7 @@ std::string generateHeader(
 		pos2 = (pos2 == std::string::npos) ? 0 : pos2;
 		size_t begin = std::max(pos1, pos2) + 1;
 
-		std::string processedName = name.substr(begin, name.find_last_of('.') - begin);
-		if (isdigit(processedName[0])) processedName = "_" + processedName;
+		std::string processedName = "shader_" + name.substr(begin, name.find_last_of('.') - begin);
 
 		headerContent << "\t" << processedName << " = " << std::to_string(offset) << "," << std::endl;
 	}
@@ -86,7 +85,7 @@ std::string generateHeader(
 
 	for (const auto& [original, minified] : variableMap) {
 		if (minified[0] == 'u') {
-			headerContent << "extern const char* " << original << ";" << std::endl;
+			headerContent << "extern const char* uniform_" << original << ";" << std::endl;
 		}
 	}
 
@@ -161,7 +160,7 @@ std::string generateCFile(
 
 	for (const auto& [original, minified] : variableMap) {
 		if (minified[0] == 'u') {
-			cFileContent << "const char* " << original << " = \"" << minified << "\";" << std::endl;
+			cFileContent << "const char* uniform_" << original << " = \"" << minified << "\";" << std::endl;
 		}
 	}
 
