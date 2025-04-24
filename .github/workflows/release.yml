@@ -1,0 +1,201 @@
+name: Build & Release (CMake Multiplatform)
+
+on:
+  push:
+    tags: [ "v*" ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows: MSVC with all archs
+          - os: windows-latest
+            compiler: cl
+            cpp_compiler: cl
+            build_generator: "Visual Studio 17 2022"
+            arch: x86
+            cmake_arch: Win32
+          - os: windows-latest
+            compiler: cl
+            cpp_compiler: cl
+            build_generator: "Visual Studio 17 2022"
+            arch: x64
+            cmake_arch: x64
+          - os: windows-latest
+            compiler: cl
+            cpp_compiler: cl
+            build_generator: "Visual Studio 17 2022"
+            arch: arm64
+            cmake_arch: ARM64
+
+          # Linux GCC
+          - os: ubuntu-latest
+            compiler: gcc
+            cpp_compiler: g++
+            arch: x86
+            cmake_arch: x86
+          - os: ubuntu-latest
+            compiler: gcc
+            cpp_compiler: g++
+            arch: x64
+            cmake_arch: x64
+          - os: ubuntu-latest
+            compiler: gcc
+            cpp_compiler: aarch64-linux-gnu-g++
+            arch: arm64
+            cmake_arch: arm64
+
+          # Linux Clang
+          - os: ubuntu-latest
+            compiler: clang
+            cpp_compiler: clang++
+            arch: x86
+            cmake_arch: x86
+          - os: ubuntu-latest
+            compiler: clang
+            cpp_compiler: clang++
+            arch: x64
+            cmake_arch: x64
+          - os: ubuntu-latest
+            compiler: clang
+            cpp_compiler: clang++
+            arch: arm64
+            cmake_arch: arm64
+            clang_target: aarch64-linux-gnu
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install cross compilers on Linux
+      if: matrix.os != 'windows-latest' && matrix.arch == 'arm64'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+    - name: Install 32-bit cross compilers on Linux
+      if: matrix.os != 'windows-latest' && matrix.arch == 'x86'
+      run: |
+        sudo dpkg --add-architecture i386
+        sudo apt-get update
+        sudo apt-get install -y gcc-multilib g++-multilib
+
+    - name: Create wrapper scripts for Clang aarch64
+      if: matrix.os != 'windows-latest' && matrix.compiler == 'clang' && matrix.arch == 'arm64'
+      run: |
+        mkdir -p toolchain
+        echo '#!/bin/bash' > toolchain/clang-aarch64
+        echo 'exec clang --target=aarch64-linux-gnu "$@"' >> toolchain/clang-aarch64
+        chmod +x toolchain/clang-aarch64
+
+        echo '#!/bin/bash' > toolchain/clang++-aarch64
+        echo 'exec clang++ --target=aarch64-linux-gnu "$@"' >> toolchain/clang++-aarch64
+        chmod +x toolchain/clang++-aarch64
+
+    - name: Set up architecture-specific compilers
+      id: compiler-setup
+      if: matrix.os != 'windows-latest'
+      shell: bash
+      run: |
+        C_COMPILER=${{ matrix.compiler }}
+        CXX_COMPILER=${{ matrix.cpp_compiler }}
+        if [[ "${{ matrix.compiler }}" == "clang" && "${{ matrix.arch }}" == "arm64" ]]; then
+          C_COMPILER="$PWD/toolchain/clang-aarch64"
+          CXX_COMPILER="$PWD/toolchain/clang++-aarch64"
+        fi
+        echo "c_compiler=$C_COMPILER" >> $GITHUB_OUTPUT
+        echo "cpp_compiler=$CXX_COMPILER" >> $GITHUB_OUTPUT
+
+    - name: Set reusable strings
+      id: vars
+      shell: bash
+      run: |
+        echo "build-output-dir=${{ github.workspace }}/.build" >> "$GITHUB_OUTPUT"
+        echo "bin-name=GLSLCrusher-${{ matrix.os == 'windows-latest' && 'windows' || 'linux' }}-${{ matrix.compiler }}-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
+
+    - name: Configure CMake (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        cmake -B "${{ github.workspace }}\\.build" `
+              -S "${{ github.workspace }}" `
+              -G "${{ matrix.build_generator }}" `
+              -A "${{ matrix.cmake_arch }}" `
+              -DCMAKE_BUILD_TYPE=Release
+
+    - name: Configure CMake (Linux/macOS)
+      if: matrix.os != 'windows-latest'
+      run: |
+        CMAKE_C_FLAGS=""
+        CMAKE_CXX_FLAGS=""
+        if [[ "${{ matrix.arch }}" == "x86" ]]; then
+            CMAKE_C_FLAGS="-m32"
+            CMAKE_CXX_FLAGS="-m32"
+        fi
+
+        cmake -B ${{ steps.vars.outputs.build-output-dir }} \
+              -S ${{ github.workspace }} \
+              -DCMAKE_C_COMPILER="${{ steps.compiler-setup.outputs.c_compiler }}" \
+              -DCMAKE_CXX_COMPILER="${{ steps.compiler-setup.outputs.cpp_compiler }}" \
+              -DCMAKE_C_FLAGS="${CMAKE_C_FLAGS}" \
+              -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS}" \
+              -DCMAKE_SYSTEM_PROCESSOR=${{ matrix.arch }} \
+              -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build
+      run: cmake --build ${{ steps.vars.outputs.build-output-dir }} --config Release
+
+    - name: Rename binary (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Path "${{ steps.vars.outputs.build-output-dir }}\release" -Force | Out-Null
+        Move-Item -Path "${{ steps.vars.outputs.build-output-dir }}\bin\GLSLCrusher.exe" `
+                  -Destination "${{ steps.vars.outputs.build-output-dir }}\release\${{ steps.vars.outputs.bin-name }}.exe"
+
+    - name: Rename binary (Linux/macOS)
+      if: matrix.os != 'windows-latest'
+      shell: bash
+      run: |
+        mkdir -p ${{ steps.vars.outputs.build-output-dir }}/release
+        mv ${{ steps.vars.outputs.build-output-dir }}/bin/GLSLCrusher \
+          ${{ steps.vars.outputs.build-output-dir }}/release/${{ steps.vars.outputs.bin-name }}
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.vars.outputs.bin-name }}
+        path: ${{ steps.vars.outputs.build-output-dir }}/release/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-content
+
+      - name: Generate SHA256 hashes
+        working-directory: release-content
+        run: |
+          for f in $(find . -type f ! -name SHA256SUMS.txt); do
+            sha256sum "$f" | sed "s|  $f|  $(basename "$f")|" >> SHA256SUMS.txt
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body: "Release for version ${{ github.ref_name }}"
+          files: release-content/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
