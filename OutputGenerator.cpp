@@ -6,36 +6,43 @@
 #include <iomanip>
 
 // Function to decompress shader source from packed content
-static constexpr std::string_view getShaderSourceFromFileSrc = R"(static void decompress(const char* compressedText, size_t offset, char* decompressedText, size_t* write_pos) {
-	for (size_t readPos = offset; compressedText[readPos] != '\0'; readPos++) {
-		unsigned char c = (unsigned char)compressedText[readPos];
+static constexpr std::string_view getShaderSourceFromFileSrc = R"(static size_t tknlen(const char* const token) {
+	size_t length = 0;
+	while (token[length]) {
+		if (token[length] == '$') {
+			length += 2;
+		}
+		length++;
+	}
+	return length;
+}
+
+static void decompress(const char* const compressedText, const char* const token, size_t offset, char* decompressedText, size_t* write_pos) {
+	for (size_t readPos = offset; token[readPos] != '\0'; readPos++) {
+		unsigned char c = (unsigned char)token[readPos];
 
 		if (c == '$') {
-			if (readPos - offset + 2 < MAX_OUTPUT_SIZE) {
-				uint16_t tokenOffset = *((uint16_t*)&compressedText[readPos + 1]);
-				readPos += 2;
+			uint16_t tokenOffset = (uint8_t)token[readPos + 1] | ((uint8_t)token[readPos + 2] << 8);
+			readPos += 2;
 
-				size_t tokenLength = strlen(&compressedText[tokenOffset]);
-				if (*write_pos + tokenLength >= MAX_OUTPUT_SIZE) {
-					fprintf(stderr, "Error: Output buffer overflow\n");
-					return;
-				}
-
-				decompress(&compressedText[tokenOffset], 0, decompressedText, write_pos);
-			}
-			else {
-				fprintf(stderr, "Error: Unexpected end of file\n");
+			size_t tokenLength = tknlen(&token[tokenOffset]);
+			if (*write_pos + tokenLength >= MAX_OUTPUT_SIZE) {
+				fprintf(stderr, "Error: Output buffer overflow\n");
 				return;
 			}
+			
+			printf("Reading offset %d: \"%s\"\n", tokenOffset, &token[tokenOffset]);
+
+			decompress(compressedText, &compressedText[tokenOffset], 0, decompressedText, write_pos);
 		}
 		else if (c >= 128) {
-			size_t tokenLength = strlen(tokens[c - 128]);
+			size_t tokenLength = tknlen(tokens[c - 128]);
 			if (*write_pos + tokenLength >= MAX_OUTPUT_SIZE) {
 				fprintf(stderr, "Error: Output buffer overflow\n");
 				return;
 			}
 
-			decompress(tokens[c - 128], 0, decompressedText, write_pos);
+			decompress(compressedText, tokens[c - 128], 0, decompressedText, write_pos);
 		}
 		else {
 			decompressedText[(*write_pos)++] = c;
@@ -44,7 +51,7 @@ static constexpr std::string_view getShaderSourceFromFileSrc = R"(static void de
 	decompressedText[*write_pos] = '\0';
 }
 
-char* getShaderSourceFromFile(const char* compressedText, size_t offset) {
+char* getShaderSourceFromFile(const char* const compressedText, size_t offset) {
 	char* decompressedText = (char*)malloc(MAX_OUTPUT_SIZE + 1);
 	if (!decompressedText) {
 		fprintf(stderr, "Memory allocation error\n");
@@ -55,7 +62,7 @@ char* getShaderSourceFromFile(const char* compressedText, size_t offset) {
 	decompressedText[VERSION_LENGTH] = '\0';
 
 	size_t write_pos = VERSION_LENGTH;
-	decompress(compressedText, offset, decompressedText, &write_pos);
+	decompress(compressedText, compressedText, offset, decompressedText, &write_pos);
 	
 	return decompressedText;
 })";
@@ -127,29 +134,51 @@ std::string generateCFile(
 				if (isprint(c) && c != '\"' && c != '\\') {
 					cFileContent << c;
 				}
-				// Escape double quotes
-				else if (c == '\"') {
-					cFileContent << "\\\"";
-				}
-				// Escape backslashes
-				else if (c == '\\') {
-					cFileContent << "\\\\";
-				}
-				// For non-printable characters, output as \xNN
 				else {
-					cFileContent << "\\x"
-						<< std::hex << std::uppercase
-						<< std::setw(2) << std::setfill('0')
-						<< static_cast<int>(c);
-	
-					if (j + 1 < str.size()) {
-						unsigned char next = static_cast<unsigned char>(str[j + 1]);
-						if (std::isxdigit(next)) {
-							cFileContent << "\"\"";
-						}
+					switch (c) {
+						case '\"':
+							cFileContent << "\\\"";
+							break;
+						case '\\':
+							cFileContent << "\\\\";
+							break;
+						case '\n':
+							cFileContent << "\\n";
+							break;
+						case '\r':
+							cFileContent << "\\r";
+							break;
+						case '\t':
+							cFileContent << "\\t";
+							break;
+						case '\b':
+							cFileContent << "\\b";
+							break;
+						case '\f':
+							cFileContent << "\\f";
+							break;
+						case '\a':
+							cFileContent << "\\a";
+							break;
+						case '\v':
+							cFileContent << "\\v";
+							break;
+						default:
+							cFileContent << "\\x"
+								<< std::hex << std::uppercase
+								<< std::setw(2) << std::setfill('0')
+								<< static_cast<int>(c);
+			
+							if (j + 1 < str.size()) {
+								unsigned char next = static_cast<unsigned char>(str[j + 1]);
+								if (std::isxdigit(next)) {
+									cFileContent << "\"\"";
+								}
+							}
+			
+							cFileContent << std::dec;
+							break;
 					}
-	
-					cFileContent << std::dec;
 				}
 			}
 	

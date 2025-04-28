@@ -75,7 +75,7 @@ void processShaders(const std::vector<std::string>& shaderFiles, int maxGLSLVers
 		}
 
 		// Remove #version directive completely
-		shaderCode = std::regex_replace(shaderCode, std::regex(R"(#version\s+\d+.*(core)?\n)"), "");
+		shaderCode = std::regex_replace(shaderCode, std::regex(R"(#version\s+\d+\s+(core)?\n)"), "");
 
 		Variables localVariableMap = extractUniformsAndInOut(shaderCode, globalUniformMap, globalInOutMap);
 		globalUniformMap.insert(localVariableMap.uniformMap.begin(), localVariableMap.uniformMap.end());

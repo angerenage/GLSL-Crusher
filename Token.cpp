@@ -21,7 +21,14 @@ TokenInfo find_best_token(const std::unordered_map<std::string, std::string>& te
 		if (text_length >= minTokenSize) {
 			for (size_t len = minTokenSize; len <= text_length; len++) {
 				for (int i = 0; i <= text_length - len; i++) {
+					// Cutting just after a '$'
+					if ((i > 0 && text[i - 1] == '$') || (i > 1 && text[i - 2] == '$')) continue;
+
+					// Token ends with '$' followed by only one char (partial $N)
+					if (i + len < text_length && (text[i + len - 1] == '$' || text[i + len - 2] == '$')) continue;
+
 					std::string sub = text.substr(i, len);
+
 					occurrences[sub]++;
 				}
 			}
@@ -68,7 +75,6 @@ void replace_tokens(std::unordered_map<std::string, std::string>& texts, const s
 Tokens compress_texts(std::unordered_map<std::string, std::string>& texts, size_t minTokenSize, size_t maxTokenSize, bool verbose) {
 	std::unordered_map<uint8_t, std::string> token_char_map;
 	std::unordered_map<uint16_t, std::string> token_list;
-	
 
 	if (verbose) {
 		std::cout << "Compressing texts with minTokenSize: " << minTokenSize;
@@ -86,7 +92,7 @@ Tokens compress_texts(std::unordered_map<std::string, std::string>& texts, size_
 		}
 
 		if (verbose) {
-			std::cout << "Best token found (" << (token_value - 128 + 1) << "/127), of length " << best_token.token.length() << " and with score: " << best_token.score << std::endl;
+			std::cout << "Best token found (" << (token_value - 128 + 1) << "/128), of length " << best_token.token.length() << " and with score: " << best_token.score << std::endl;
 		}
 
 		token_char_map[token_value] = best_token.token;
