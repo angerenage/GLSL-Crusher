@@ -31,8 +31,6 @@ static void decompress(const char* const compressedText, const char* const token
 				return;
 			}
 			
-			printf("Reading offset %d: \"%s\"\n", tokenOffset, &token[tokenOffset]);
-
 			decompress(compressedText, &compressedText[tokenOffset], 0, decompressedText, write_pos);
 		}
 		else if (c >= 128) {

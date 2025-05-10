@@ -1,59 +1,105 @@
 #include "ShaderUtils.h"
-#include <fstream>
-#include <sstream>
-#include <filesystem>
+
 #include <iostream>
 #include <stack>
 
 // Extracts uniforms and in/out variables from shader code
-Variables extractUniformsAndInOut(
-	const std::string& shaderCode, 
+Variables extractExternals(
+	const std::string& code,
 	std::unordered_map<std::string, std::string>& globalUniformMap,
-	std::unordered_map<std::string, std::string>& globalInOutMap
+	std::unordered_map<std::string, std::string>& globalInOutMap,
+	bool verbose
 ) {
 	std::unordered_map<std::string, std::string> uniformMap;
 	std::unordered_map<std::string, std::string> inOutMap;
 
-	// Regular expressions to match uniform and in/out variable and array declarations
-	std::regex uniformRegex(R"(\buniform\s+\w+\s+((?:\w+(?:\[\d*\])?\s*,\s*)*\w+(?:\[\d*\])?);)");
-	std::regex inoutRegex(R"(\b(in|out)\s+\w+\s+((?:\w+(?:\[\d*\])?\s*,\s*)*\w+(?:\[\d*\])?);)");
-	std::smatch match;
-
-	auto processVariables = [](const std::string& variables, auto& globalMap, auto& localMap, const std::string& prefix) {
-		std::stringstream ss(variables);
-		std::string variable;
-		while (getline(ss, variable, ',')) {
-			variable.erase(std::remove_if(variable.begin(), variable.end(), ::isspace), variable.end()); // remove spaces
-			std::string nameOnly = std::regex_replace(variable, std::regex(R"(\[\d*\])"), ""); // remove [N]
-			if (globalMap.find(nameOnly) == globalMap.end()) {
-				std::string newName = prefix + std::to_string(globalMap.size());
-				globalMap[nameOnly] = newName;
-			}
-			localMap[nameOnly] = globalMap[nameOnly];
-		}
+	auto isIdentChar = [](char c) {
+		return std::isalnum(c) || c == '_';
 	};
 
-	// Extract uniforms
-	std::string::const_iterator searchStart(shaderCode.cbegin());
-	while (regex_search(searchStart, shaderCode.cend(), match, uniformRegex)) {
-		processVariables(match[1], globalUniformMap, uniformMap, "u");
-		searchStart = match.suffix().first;
-	}
+	size_t i = 0;
+	while (i < code.size()) {
+		// Skip spaces
+		while (i < code.size() && std::isspace(code[i])) i++;
 
-	// Extract in/out variables
-	searchStart = shaderCode.cbegin();
-	while (regex_search(searchStart, shaderCode.cend(), match, inoutRegex)) {
-		processVariables(match[2], globalInOutMap, inOutMap, "a");
-		searchStart = match.suffix().first;
-	}
+		// Look for "uniform", "in" or "out"
+		auto matchKeyword = [&](const char* kw) {
+			size_t len = std::strlen(kw);
+			return code.compare(i, len, kw) == 0 && (i + len == code.size() || !isIdentChar(code[i + len]));
+		};
 
+		std::string kind;
+		if (matchKeyword("uniform")) {
+			kind = "uniform";
+			i += 7;
+		}
+		else if (matchKeyword("in")) {
+			kind = "in";
+			i += 2;
+		}
+		else if (matchKeyword("out")) {
+			kind = "out";
+			i += 3;
+		}
+		else {
+			++i;
+			continue;
+		}
+
+		// Skip space
+		while (i < code.size() && std::isspace(code[i])) i++;
+
+		// Parse type (e.g., vec3, float...)
+		while (i < code.size() && isIdentChar(code[i])) ++i;
+
+		// Skip space
+		while (i < code.size() && std::isspace(code[i])) i++;
+
+		// Parse list of names
+		while (i < code.size()) {
+			// Parse identifier
+			size_t start = i;
+			while (i < code.size() && isIdentChar(code[i])) ++i;
+			if (start == i) break;
+			std::string name = code.substr(start, i - start);
+
+			// Optionally: [number] or []
+			if (i < code.size() && code[i] == '[') {
+				++i;
+				while (i < code.size() && (std::isdigit(code[i]) || code[i] == ' ')) ++i;
+				if (i < code.size() && code[i] == ']') ++i;
+			}
+
+			if (verbose) {
+				std::cout << "Found " << kind << ": " << name << std::endl;
+			}
+
+			// Store
+			std::unordered_map<std::string, std::string>& globalMap = (kind == "uniform") ? globalUniformMap : globalInOutMap;
+			std::unordered_map<std::string, std::string>& localMap = (kind == "uniform") ? uniformMap : inOutMap;
+			if (!name.empty() && globalMap.find(name) == globalMap.end()) {
+				std::string prefix = (kind == "uniform") ? "u" : "a";
+				globalMap[name] = prefix + std::to_string(globalMap.size());
+			}
+			localMap[name] = globalMap[name];
+
+			// Skip space
+			while (i < code.size() && std::isspace(code[i])) ++i;
+
+			if (i < code.size() && code[i] == ';') {
+				++i;
+				break;
+			}
+			else if (i < code.size() && code[i] == ',') {
+				++i;
+				while (i < code.size() && std::isspace(code[i])) ++i;
+			}
+			else {
+				break;
+			}
+		}
+	}
 	return {uniformMap, inOutMap};
-}
-
-// Escapes special characters in a string for regex matching
-static std::string escapeRegex(const std::string& str) {
-	static const std::regex specialChars(R"([-[\]{}()*+?.,\\^$|#\s])");
-	return std::regex_replace(str, specialChars, R"(\$&)");
 }
 
 // Finds the scopes of variable redefinitions in shader code
@@ -61,8 +107,78 @@ static std::vector<std::pair<size_t, size_t>> findRedefinitionScopes(const std::
 	std::vector<std::pair<size_t, size_t>> scopes;
 	std::stack<size_t> braceStack;
 
+	auto isIdentChar = [](char c) {
+		return std::isalnum(c) || c == '_';
+	};
+
+	auto containsRedef = [&](const std::string& block) -> bool {
+		size_t i = 0;
+
+		while (i < block.size()) {
+			// Skip whitespace
+			while (i < block.size() && std::isspace(block[i])) i++;
+
+			// Skip type
+			while (i < block.size() && isIdentChar(block[i])) i++;
+			while (i < block.size() && std::isspace(block[i])) i++;
+
+			// Parse variable name
+			size_t nameStart = i;
+			while (i < block.size() && isIdentChar(block[i])) i++;
+			if (nameStart == i) continue;
+
+			std::string found = block.substr(nameStart, i - nameStart);
+			if (found == var) return true;
+
+			// Skip possible "[...]", "=...", ";", ","
+			while (i < block.size() && block[i] != ';' && block[i] != ',') ++i;
+			if (i < block.size()) ++i;
+		}
+
+		return false;
+	};
+
+	auto containsParamRedef = [&](size_t fnStart, size_t fnEnd) -> bool {
+		// Assumes: fnStart is '(', fnEnd is ')'
+		size_t i = fnStart + 1;
+		while (i < fnEnd) {
+			// Skip type
+			while (i < fnEnd && isIdentChar(code[i])) ++i;
+			while (i < fnEnd && std::isspace(code[i])) ++i;
+
+			// Read name
+			size_t nameStart = i;
+			while (i < fnEnd && isIdentChar(code[i])) ++i;
+			std::string found = code.substr(nameStart, i - nameStart);
+			if (found == var) return true;
+
+			// Skip "[...]" and comma
+			while (i < fnEnd && code[i] != ',') ++i;
+			if (i < fnEnd) ++i;
+		}
+		return false;
+	};
+
 	for (size_t i = 0; i < code.size(); ++i) {
-		if (code[i] == '{') {
+		if (code[i] == '(') {
+			// Look for function parameters
+			size_t start = i;
+			int depth = 1;
+			while (i + 1 < code.size() && depth > 0) {
+				++i;
+				if (code[i] == '(') depth++;
+				else if (code[i] == ')') depth--;
+			}
+			size_t end = i;
+			if (containsParamRedef(start, end)) {
+				// Look forward for opening brace
+				while (end < code.size() && code[end] != '{') ++end;
+				if (end < code.size()) {
+					braceStack.push(end);
+				}
+			}
+		}
+		else if (code[i] == '{') {
 			braceStack.push(i);
 		}
 		else if (code[i] == '}') {
@@ -71,9 +187,7 @@ static std::vector<std::pair<size_t, size_t>> findRedefinitionScopes(const std::
 				braceStack.pop();
 				size_t end = i + 1;
 				std::string block = code.substr(start, end - start);
-
-				std::regex defRegex("\\b\\w+\\s+" + var + R"((\s*[\[=;]))");
-				if (std::regex_search(block, defRegex)) {
+				if (containsRedef(block)) {
 					scopes.emplace_back(start, end);
 				}
 			}
@@ -83,36 +197,61 @@ static std::vector<std::pair<size_t, size_t>> findRedefinitionScopes(const std::
 }
 
 // Renames variables in shader code based on a mapping
-std::string renameVariables(const std::string& shaderCode, const std::unordered_map<std::string, std::string>& variableMap) {
-	std::string result = shaderCode;
+std::string renameVariables(
+	const std::string& code,
+	const std::unordered_map<std::string, std::string>& variableMap
+) {
+	std::string result;
+	size_t i = 0;
 
-	for (const auto& [original, replacement] : variableMap) {
-		std::string escaped = escapeRegex(original);
-		std::regex varRegex("(^|[^\\.\\w])(" + escaped + R"((\b|\[\d*\])))");
+	while (i < code.size()) {
+		bool matched = false;
 
-		auto scopes = findRedefinitionScopes(result, original);
-
-		std::string updated;
-		size_t last = 0;
-
-		for (const auto& [start, end] : scopes) {
-			// Replace in the segment before the current scope
-			if (start > last) {
-				updated += std::regex_replace(result.substr(last, start - last), varRegex, "$1" + replacement + "$3");
+		for (const auto& [name, replacement] : variableMap) {
+			if (code.compare(i, name.size(), name) == 0) {
+				// Ensure it's a word boundary
+				bool left = (i == 0) || !std::isalnum(code[i - 1]);
+				bool right = (i + name.size() >= code.size()) || !std::isalnum(code[i + name.size()]);
+				if (left && right) {
+					result += replacement;
+					i += name.size();
+					matched = true;
+					break;
+				}
 			}
-
-			// Copy the scope as-is
-			updated.append(result, start, end - start);
-			last = end;
 		}
 
-		// Replace in the final segment after all scopes
-		if (last < result.size()) {
-			updated += std::regex_replace(result.substr(last), varRegex, "$1" + replacement + "$3");
+		if (!matched) {
+			result += code[i++];
 		}
-
-		result = std::move(updated);
 	}
 
 	return result;
+}
+
+// Retrieves the GLSL version directive position from shader code
+int extractGLSLVersion(const std::string& code) {
+	size_t pos = code.find("#version");
+	if (pos == std::string::npos) return 0;
+
+	pos += 8;
+	while (pos < code.size() && std::isspace(code[pos])) ++pos;
+
+	size_t start = pos;
+	while (pos < code.size() && std::isdigit(code[pos])) ++pos;
+
+	if (start == pos) return 0;
+	return std::stoi(code.substr(start, pos - start));
+}
+
+// Removes the GLSL version directive from shader code
+void removeGLSLVersionDirective(std::string& code) {
+	size_t pos = code.find("#version");
+	if (pos == std::string::npos) return;
+
+	size_t end = pos;
+	while (end < code.size() && code[end] != '\n') ++end;
+	if (end < code.size()) ++end; // include newline
+
+	code.erase(pos, end - pos);
 }
