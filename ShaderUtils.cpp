@@ -1,6 +1,7 @@
 #include "ShaderUtils.h"
 
 #include <iostream>
+#include <vector>
 #include <stack>
 
 // Extracts uniforms and in/out variables from shader code
@@ -23,8 +24,8 @@ Variables extractExternals(
 		while (i < code.size() && std::isspace(code[i])) i++;
 
 		// Look for "uniform", "in" or "out"
-		auto matchKeyword = [&](const char* kw) {
-			size_t len = std::strlen(kw);
+		auto matchKeyword = [&](std::string_view kw) {
+			size_t len = kw.length();
 			return code.compare(i, len, kw) == 0 && (i + len == code.size() || !isIdentChar(code[i + len]));
 		};
 
@@ -46,14 +47,9 @@ Variables extractExternals(
 			continue;
 		}
 
-		// Skip space
-		while (i < code.size() && std::isspace(code[i])) i++;
-
-		// Parse type (e.g., vec3, float...)
-		while (i < code.size() && isIdentChar(code[i])) ++i;
-
-		// Skip space
-		while (i < code.size() && std::isspace(code[i])) i++;
+		while (i < code.size() && std::isspace(code[i])) i++; // Skip space
+		while (i < code.size() && isIdentChar(code[i])) ++i; // Parse type (e.g., vec3, float...)
+		while (i < code.size() && std::isspace(code[i])) i++; // Skip space
 
 		// Parse list of names
 		while (i < code.size()) {

@@ -8,9 +8,22 @@
 // Function to read content from a file to a string
 std::string readFile(const std::string& filePath) {
 	std::ifstream file(filePath);
+	if (!file.is_open()) {
+		throw std::runtime_error("Failed to open file: " + filePath);
+	}
+
 	std::stringstream buffer;
 	buffer << file.rdbuf();
-	return buffer.str();
+	std::string content = buffer.str();
+
+	for (size_t i = 0; i < content.size(); ++i) {
+		unsigned char c = static_cast<unsigned char>(content[i]);
+		if (c > 127) {
+			throw std::runtime_error("Non-ASCII character detected at byte " + std::to_string(i) + " in file " + filePath);
+		}
+	}
+
+	return content;
 }
 
 // Function to write a string to a file
