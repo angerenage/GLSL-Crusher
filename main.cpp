@@ -74,6 +74,10 @@ void processShaders(
 	for (const auto& filePath : shaderFiles) {
 		std::string shaderCode = readFile(filePath);
 
+		if (verbose) {
+			std::cout << "Processing shader: " << filePath << "\n";
+		}
+
 		// Extract and validate version
 		int shaderVersion = extractGLSLVersion(shaderCode);
 		if (shaderVersion > 0) {
@@ -85,13 +89,7 @@ void processShaders(
 
 		removeGLSLVersionDirective(shaderCode);
 
-		Variables localVariableMap = extractExternals(shaderCode, globalUniformMap, globalInOutMap, verbose);
-		globalUniformMap.insert(localVariableMap.uniformMap.begin(), localVariableMap.uniformMap.end());
-		globalInOutMap.insert(localVariableMap.inOutMap.begin(), localVariableMap.inOutMap.end());
-
-		shaderCode = renameVariables(shaderCode, globalUniformMap);
-		shaderCode = renameVariables(shaderCode, globalInOutMap);
-		shaders[filePath] = shaderCode;
+		shaders[filePath] = extractExternals(shaderCode, globalUniformMap, globalInOutMap, true);
 	}
 }
 
