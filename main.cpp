@@ -89,7 +89,7 @@ void processShaders(
 
 		removeGLSLVersionDirective(shaderCode);
 
-		shaders[filePath] = extractExternals(shaderCode, globalUniformMap, globalInOutMap, true);
+		shaders[filePath] = extractExternals(shaderCode, globalUniformMap, globalInOutMap, verbose);
 	}
 }
 

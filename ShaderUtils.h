@@ -7,7 +7,7 @@ std::string extractExternals(
 	std::string code,
 	std::unordered_map<std::string, std::string>& globalUniformMap,
 	std::unordered_map<std::string, std::string>& globalInOutMap,
-	bool verbose = false
+	bool verbose
 );
 
 int extractGLSLVersion(const std::string& code);

@@ -12,149 +12,131 @@ std::string extractExternals(
 	std::unordered_map<std::string, std::string>& globalInOutMap,
 	bool verbose
 ) {
-	auto isIdentChar = [](char c) {
-		return std::isalnum(c) || c == '_';
+	auto replaceGlobal = [&](const std::string& name) -> std::string {
+		if (globalUniformMap.count(name)) return globalUniformMap[name];
+		if (globalInOutMap.count(name)) return globalInOutMap[name];
+		return {};
 	};
 
 	std::vector<std::unordered_set<std::string>> scopeStack;
+	std::vector<std::string> params;
 
-	auto isShadowed = [&](const std::string& name) {
-		for (auto it = scopeStack.rbegin(); it != scopeStack.rend(); it++) {
+	auto isShadowed = [&](const std::string& name) -> bool {
+		for (auto it = scopeStack.rbegin(); it != scopeStack.rend(); ++it)
 			if (it->count(name)) return true;
-		}
+		for (const auto& p : params)
+			if (p == name) return true;
 		return false;
 	};
 
-	std::unordered_map<std::string, std::string> localUniformMap;
-	std::unordered_map<std::string, std::string> localInOutMap;
-
 	std::string output;
-	std::string currentToken;
-	std::string lastIdent;
-	std::string declKind;
+	std::string currentToken, declKind;
 
-	enum class DeclState { None, FoundDecl, ScanningVar };
-	DeclState declState = DeclState::None;
-
-	bool insideFunctionArgs = false;
 	int parenDepth = 0;
+	int previousWords = 0;
+
+	char previousNonSpace = '\0';
 
 	size_t i = 0;
+	
+	auto nextNonSpace = [&](char c) -> char {
+		for (size_t j = i; j < code.size(); j++) {
+			if (!std::isspace(static_cast<unsigned char>(code[j]))) {
+				return code[j];
+			}
+		}
+		return c;
+	};
+
 	while (i < code.size()) {
 		char c = code[i];
 
-		// Handle function arguments
-		if (c == '(') {
-			parenDepth++;
-			if (!output.empty() && isIdentChar(output.back())) {
-				insideFunctionArgs = true;
+		// --- IDENTIFIERS ---
+		if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+			currentToken += c;
+		}
+		else if (std::isdigit(static_cast<unsigned char>(c))) {
+			if (!currentToken.empty()) currentToken += c;
+			else output += c;
+		}
+		else {
+			// --- PARENTHESES ---
+			if (c == '(') {
+				params.clear();
+				parenDepth++;
 			}
-			output += c;
-			i++;
-			continue;
-		}
-		if (c == ')') {
-			if (parenDepth > 0) parenDepth--;
-			if (parenDepth == 0) insideFunctionArgs = false;
-			output += c;
-			i++;
-			continue;
-		}
+			// --- SCOPES ---
+			else if (c == '{') {
+				scopeStack.emplace_back();
+				if (!params.empty()) {
+					for (const auto& p : params) scopeStack.back().insert(p);
+					params.clear();
+				}
+			}
+			else if (c == '}') {
+				if (!scopeStack.empty()) scopeStack.pop_back();
+			}
+			// --- WHITESPACE AND PUNCTUATION ---
+			else if (std::isspace(static_cast<unsigned char>(c)) || std::ispunct(static_cast<unsigned char>(c))) {
+				if (i >= 1 && !std::isspace(static_cast<unsigned char>(code[i - 1])) && !currentToken.empty()) {
+					previousWords++;
+				}
+			}
 
-		// Handle scopes
-		if (c == '{') {
-			scopeStack.emplace_back();
-			output += c;
-			i++;
-			continue;
-		}
-		if (c == '}') {
-			if (!scopeStack.empty()) scopeStack.pop_back();
-			output += c;
-			i++;
-			continue;
-		}
+			// --- END OF TOKEN ---
+			if (!currentToken.empty()) {
+				char nextChar = nextNonSpace(c);
 
-		// Identifiers
-		if (isIdentChar(c)) {
-			currentToken.clear();
-			while (i < code.size() && isIdentChar(code[i])) currentToken += code[i++];
+				if (parenDepth == 0 && (currentToken == "uniform" || currentToken == "in" || currentToken == "out")) {
+					declKind = currentToken;
+				}
+				else if (std::ispunct(static_cast<unsigned char>(nextChar))) {
+					if (parenDepth > 0 && previousWords > 1) {
+						params.push_back(currentToken);
+					}
+					else if (parenDepth == 0 && !declKind.empty()) {
+						auto& map = (declKind == "uniform" ? globalUniformMap : globalInOutMap);
+						auto it = map.find(currentToken);
+						if (it == map.end()) map[currentToken] = (declKind == "uniform" ? "u" : "a") + std::to_string(map.size());
 
-			// Start of a declaration
-			if (!insideFunctionArgs && declState == DeclState::None && (currentToken == "uniform" || currentToken == "in" || currentToken == "out")) {
-				declKind = currentToken;
-				declState = DeclState::FoundDecl;
+						if (verbose) std::cout << "Found " << declKind << ": " << currentToken << " -> " << map[currentToken] << "\n";
+
+						currentToken = map[currentToken];
+					}
+					else if (previousNonSpace != '.' && !isShadowed(currentToken)) {
+						if (previousWords > 1) {
+							if (scopeStack.empty()) scopeStack.emplace_back();
+							scopeStack.back().insert(currentToken);
+						}
+						else {
+							std::string replacement = replaceGlobal(currentToken);
+							if (!replacement.empty()) {
+								printf("Replacing %s with %s\n", currentToken.c_str(), replacement.c_str());
+								currentToken = replacement;
+							}
+						}
+					}
+
+					if (c == ';') {
+						declKind.clear();
+						if (parenDepth > 0 && !params.empty()) params.clear();
+					}
+				}
+
 				output += currentToken;
-				continue;
+				currentToken.clear();
 			}
 
-			// Token after 'uniform', 'in', or 'out'
-			if (declState == DeclState::FoundDecl || declState == DeclState::ScanningVar) {
-				lastIdent = currentToken;
-				declState = DeclState::ScanningVar;
-				output += currentToken;
-				continue;
+			if (c == ')') {
+				if (parenDepth > 0) parenDepth--;
 			}
 
-			// Regular token: replace if global and not shadowed
-			if (!isShadowed(currentToken)) {
-				auto it = globalUniformMap.find(currentToken);
-				if (it != globalUniformMap.end()) {
-					output += it->second;
-					continue;
-				}
-				it = globalInOutMap.find(currentToken);
-				if (it != globalInOutMap.end()) {
-					output += it->second;
-					continue;
-				}
-			}
-			output += currentToken;
-			continue;
+			if (std::ispunct(static_cast<unsigned char>(c))) previousWords = 0;
+
+			output += c;
+			previousNonSpace = c;
 		}
-
-		// End of declaration or list of variables
-		if (c == ';' || c == ',' || c == '[' || c == '=') {
-			if (declState == DeclState::ScanningVar && !lastIdent.empty()) {
-				std::string replacement;
-				if (declKind == "uniform") {
-					auto it = globalUniformMap.find(lastIdent);
-					if (it != globalUniformMap.end()) {
-						replacement = it->second;
-					}
-					else {
-						replacement = "u" + std::to_string(globalUniformMap.size());
-						globalUniformMap[lastIdent] = replacement;
-					}
-				}
-				else {
-					auto it = globalInOutMap.find(lastIdent);
-					if (it != globalInOutMap.end()) {
-						replacement = it->second;
-					}
-					else {
-						replacement = "a" + std::to_string(globalInOutMap.size());
-						globalInOutMap[lastIdent] = replacement;
-					}
-				}
-				if (verbose) std::cout << "Found " << declKind << ": " << lastIdent << " -> " << replacement << "\n";
-
-				if (!scopeStack.empty()) scopeStack.back().insert(lastIdent);
-
-				// Replace last identifier in output
-				size_t pos = output.size();
-				while (pos > 0 && isIdentChar(output[pos - 1])) pos--;
-				output.erase(pos);
-				output += replacement;
-
-				lastIdent.clear();
-			}
-
-			if (c == ';') declState = DeclState::None;
-		}
-
-		// Copy anything else
-		output += c;
+		
 		i++;
 	}
 
