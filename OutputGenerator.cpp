@@ -31,8 +31,6 @@ static void decompress(const char* const compressedText, const char* const token
 				return;
 			}
 			
-			printf("Reading offset %d: \"%s\"\n", tokenOffset, &token[tokenOffset]);
-
 			decompress(compressedText, &compressedText[tokenOffset], 0, decompressedText, write_pos);
 		}
 		else if (c >= 128) {
@@ -75,6 +73,8 @@ std::string generateHeader(
 	std::ostringstream headerContent;
 
 	headerContent << "#pragma once" << std::endl << std::endl;
+
+	headerContent << "#include <stddef.h>" << std::endl << std::endl;
 
 	headerContent << "enum ShaderOffset {" << std::endl;
 	for (const auto& [name, offset] : shaderOffsets) {
@@ -195,7 +195,7 @@ std::string generateCFile(
 
 	cFileContent << std::endl;
 
-	cFileContent << getShaderSourceFromFileSrc;
+	cFileContent << getShaderSourceFromFileSrc << std::endl;
 
 	return cFileContent.str();
 }

@@ -1,118 +1,171 @@
 #include "ShaderUtils.h"
-#include <fstream>
-#include <sstream>
-#include <filesystem>
+
 #include <iostream>
+#include <vector>
+#include <unordered_set>
 #include <stack>
 
-// Extracts uniforms and in/out variables from shader code
-Variables extractUniformsAndInOut(
-	const std::string& shaderCode, 
+// Extracts and renames external variables, uniforms, ins and outs, in GLSL code
+std::string extractExternals(
+	std::string code,
 	std::unordered_map<std::string, std::string>& globalUniformMap,
-	std::unordered_map<std::string, std::string>& globalInOutMap
+	std::unordered_map<std::string, std::string>& globalInOutMap,
+	bool verbose
 ) {
-	std::unordered_map<std::string, std::string> uniformMap;
-	std::unordered_map<std::string, std::string> inOutMap;
-
-	// Regular expressions to match uniform and in/out variable and array declarations
-	std::regex uniformRegex(R"(\buniform\s+\w+\s+((?:\w+(?:\[\d*\])?\s*,\s*)*\w+(?:\[\d*\])?);)");
-	std::regex inoutRegex(R"(\b(in|out)\s+\w+\s+((?:\w+(?:\[\d*\])?\s*,\s*)*\w+(?:\[\d*\])?);)");
-	std::smatch match;
-
-	auto processVariables = [](const std::string& variables, auto& globalMap, auto& localMap, const std::string& prefix) {
-		std::stringstream ss(variables);
-		std::string variable;
-		while (getline(ss, variable, ',')) {
-			variable.erase(std::remove_if(variable.begin(), variable.end(), ::isspace), variable.end()); // remove spaces
-			std::string nameOnly = std::regex_replace(variable, std::regex(R"(\[\d*\])"), ""); // remove [N]
-			if (globalMap.find(nameOnly) == globalMap.end()) {
-				std::string newName = prefix + std::to_string(globalMap.size());
-				globalMap[nameOnly] = newName;
-			}
-			localMap[nameOnly] = globalMap[nameOnly];
-		}
+	auto replaceGlobal = [&](const std::string& name) -> std::string {
+		if (globalUniformMap.count(name)) return globalUniformMap[name];
+		if (globalInOutMap.count(name)) return globalInOutMap[name];
+		return {};
 	};
 
-	// Extract uniforms
-	std::string::const_iterator searchStart(shaderCode.cbegin());
-	while (regex_search(searchStart, shaderCode.cend(), match, uniformRegex)) {
-		processVariables(match[1], globalUniformMap, uniformMap, "u");
-		searchStart = match.suffix().first;
-	}
+	std::vector<std::unordered_set<std::string>> scopeStack;
+	std::vector<std::string> params;
 
-	// Extract in/out variables
-	searchStart = shaderCode.cbegin();
-	while (regex_search(searchStart, shaderCode.cend(), match, inoutRegex)) {
-		processVariables(match[2], globalInOutMap, inOutMap, "a");
-		searchStart = match.suffix().first;
-	}
+	auto isShadowed = [&](const std::string& name) -> bool {
+		for (auto it = scopeStack.rbegin(); it != scopeStack.rend(); ++it)
+			if (it->count(name)) return true;
+		for (const auto& p : params)
+			if (p == name) return true;
+		return false;
+	};
 
-	return {uniformMap, inOutMap};
-}
+	std::string output;
+	std::string currentToken, declKind;
 
-// Escapes special characters in a string for regex matching
-static std::string escapeRegex(const std::string& str) {
-	static const std::regex specialChars(R"([-[\]{}()*+?.,\\^$|#\s])");
-	return std::regex_replace(str, specialChars, R"(\$&)");
-}
+	int parenDepth = 0;
+	int previousWords = 0;
 
-// Finds the scopes of variable redefinitions in shader code
-static std::vector<std::pair<size_t, size_t>> findRedefinitionScopes(const std::string& code, const std::string& var) {
-	std::vector<std::pair<size_t, size_t>> scopes;
-	std::stack<size_t> braceStack;
+	char previousNonSpace = '\0';
 
-	for (size_t i = 0; i < code.size(); ++i) {
-		if (code[i] == '{') {
-			braceStack.push(i);
+	size_t i = 0;
+	
+	auto nextNonSpace = [&](char c) -> char {
+		for (size_t j = i; j < code.size(); j++) {
+			if (!std::isspace(static_cast<unsigned char>(code[j]))) {
+				return code[j];
+			}
 		}
-		else if (code[i] == '}') {
-			if (!braceStack.empty()) {
-				size_t start = braceStack.top();
-				braceStack.pop();
-				size_t end = i + 1;
-				std::string block = code.substr(start, end - start);
+		return c;
+	};
 
-				std::regex defRegex("\\b\\w+\\s+" + var + R"((\s*[\[=;]))");
-				if (std::regex_search(block, defRegex)) {
-					scopes.emplace_back(start, end);
+	while (i < code.size()) {
+		char c = code[i];
+
+		// --- IDENTIFIERS ---
+		if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
+			currentToken += c;
+		}
+		else if (std::isdigit(static_cast<unsigned char>(c))) {
+			if (!currentToken.empty()) currentToken += c;
+			else output += c;
+		}
+		else {
+			// --- PARENTHESES ---
+			if (c == '(') {
+				params.clear();
+				parenDepth++;
+			}
+			// --- SCOPES ---
+			else if (c == '{') {
+				scopeStack.emplace_back();
+				if (!params.empty()) {
+					for (const auto& p : params) scopeStack.back().insert(p);
+					params.clear();
 				}
 			}
-		}
-	}
-	return scopes;
-}
-
-// Renames variables in shader code based on a mapping
-std::string renameVariables(const std::string& shaderCode, const std::unordered_map<std::string, std::string>& variableMap) {
-	std::string result = shaderCode;
-
-	for (const auto& [original, replacement] : variableMap) {
-		std::string escaped = escapeRegex(original);
-		std::regex varRegex("(^|[^\\.\\w])(" + escaped + R"((\b|\[\d*\])))");
-
-		auto scopes = findRedefinitionScopes(result, original);
-
-		std::string updated;
-		size_t last = 0;
-
-		for (const auto& [start, end] : scopes) {
-			// Replace in the segment before the current scope
-			if (start > last) {
-				updated += std::regex_replace(result.substr(last, start - last), varRegex, "$1" + replacement + "$3");
+			else if (c == '}') {
+				if (!scopeStack.empty()) scopeStack.pop_back();
+			}
+			// --- WHITESPACE AND PUNCTUATION ---
+			else if (std::isspace(static_cast<unsigned char>(c)) || std::ispunct(static_cast<unsigned char>(c))) {
+				if (i >= 1 && !std::isspace(static_cast<unsigned char>(code[i - 1])) && !currentToken.empty()) {
+					previousWords++;
+				}
 			}
 
-			// Copy the scope as-is
-			updated.append(result, start, end - start);
-			last = end;
-		}
+			// --- END OF TOKEN ---
+			if (!currentToken.empty()) {
+				char nextChar = nextNonSpace(c);
 
-		// Replace in the final segment after all scopes
-		if (last < result.size()) {
-			updated += std::regex_replace(result.substr(last), varRegex, "$1" + replacement + "$3");
-		}
+				if (parenDepth == 0 && (currentToken == "uniform" || currentToken == "in" || currentToken == "out")) {
+					declKind = currentToken;
+				}
+				else if (std::ispunct(static_cast<unsigned char>(nextChar))) {
+					if (parenDepth > 0 && previousWords > 1) {
+						params.push_back(currentToken);
+					}
+					else if (parenDepth == 0 && !declKind.empty()) {
+						auto& map = (declKind == "uniform" ? globalUniformMap : globalInOutMap);
+						auto it = map.find(currentToken);
+						if (it == map.end()) map[currentToken] = (declKind == "uniform" ? "u" : "a") + std::to_string(map.size());
 
-		result = std::move(updated);
+						if (verbose) std::cout << "Found " << declKind << ": " << currentToken << " -> " << map[currentToken] << "\n";
+
+						currentToken = map[currentToken];
+					}
+					else if (previousNonSpace != '.' && !isShadowed(currentToken)) {
+						if (previousWords > 1) {
+							if (scopeStack.empty()) scopeStack.emplace_back();
+							scopeStack.back().insert(currentToken);
+						}
+						else {
+							std::string replacement = replaceGlobal(currentToken);
+							if (!replacement.empty()) {
+								printf("Replacing %s with %s\n", currentToken.c_str(), replacement.c_str());
+								currentToken = replacement;
+							}
+						}
+					}
+
+					if (c == ';') {
+						declKind.clear();
+						if (parenDepth > 0 && !params.empty()) params.clear();
+					}
+				}
+
+				output += currentToken;
+				currentToken.clear();
+			}
+
+			if (c == ')') {
+				if (parenDepth > 0) parenDepth--;
+			}
+
+			if (std::ispunct(static_cast<unsigned char>(c))) previousWords = 0;
+
+			output += c;
+			previousNonSpace = c;
+		}
+		
+		i++;
 	}
 
-	return result;
+	return output;
+}
+
+// Retrieves the GLSL version directive position from shader code
+int extractGLSLVersion(const std::string& code) {
+	size_t pos = code.find("#version");
+	if (pos == std::string::npos) return 0;
+
+	pos += 8;
+	while (pos < code.size() && std::isspace(code[pos])) pos++;
+
+	size_t start = pos;
+	while (pos < code.size() && std::isdigit(code[pos])) pos++;
+
+	if (start == pos) return 0;
+	return std::stoi(code.substr(start, pos - start));
+}
+
+// Removes the GLSL version directive from shader code
+void removeGLSLVersionDirective(std::string& code) {
+	size_t pos = code.find("#version");
+	if (pos == std::string::npos) return;
+
+	size_t end = pos;
+	while (end < code.size() && code[end] != '\n') end++;
+	if (end < code.size()) end++; // include newline
+
+	code.erase(pos, end - pos);
 }

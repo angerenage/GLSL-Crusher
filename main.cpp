@@ -1,9 +1,4 @@
-#include <string>
-#include <unordered_map>
 #include <iostream>
-#include <vector>
-#include <regex>
-#include <stdexcept>
 
 #include "FileUtils.h"
 #include "ShaderUtils.h"
@@ -11,7 +6,14 @@
 #include "OutputGenerator.h"
 
 // Function to parse command-line arguments
-void parseArguments(int argc, char** argv, std::string& outputPackFile, std::string& outputHeaderFile, std::string& outputCFile, int& maxGLSLVersion, std::vector<std::string>& shaderFiles, bool& useCoreVersion, bool& verbose, size_t& minTokenSize, size_t& maxTokenSize) {
+void parseArguments(
+	int argc, char** argv,
+	std::string& outputPackFile, std::string& outputHeaderFile, std::string& outputCFile,
+	int& maxGLSLVersion, bool& useCoreVersion,
+	std::vector<std::string>& shaderFiles,
+	size_t& minTokenSize, size_t& maxTokenSize,
+	bool& verbose
+) {
 	if (argc < 2) {
 		throw std::runtime_error("Usage: " + std::string(argv[0]) + " <shader_file1> <shader_file2> ... [--min-token-size <size>] [--max-token-size <size>] [-p <pack_file> | --output-pack <pack_file>] [-h <header_file> | --output-header <header_file>] [-c <c_file> | --output-c <c_file>] [-v <version> | --glsl-version <version>] [--core | --no-core] [--verbose]");
 	}
@@ -60,30 +62,34 @@ void parseArguments(int argc, char** argv, std::string& outputPackFile, std::str
 }
 
 // Function to process shaders and extract relevant information
-void processShaders(const std::vector<std::string>& shaderFiles, int maxGLSLVersion, std::unordered_map<std::string, std::string>& shaders, std::unordered_map<std::string, std::string>& globalUniformMap, std::unordered_map<std::string, std::string>& globalInOutMap, int& highestGLSLVersion) {
+void processShaders(
+	const std::vector<std::string>& shaderFiles,
+	int maxGLSLVersion,
+	std::unordered_map<std::string, std::string>& shaders,
+	std::unordered_map<std::string, std::string>& globalUniformMap,
+	std::unordered_map<std::string, std::string>& globalInOutMap,
+	int& highestGLSLVersion,
+	bool verbose
+) {
 	for (const auto& filePath : shaderFiles) {
 		std::string shaderCode = readFile(filePath);
 
-		// Extract GLSL version from the shader
-		std::smatch match;
-		if (std::regex_search(shaderCode, match, std::regex(R"(#version\s+(\d+))"))) {
-			int shaderVersion = std::stoi(match[1].str());
+		if (verbose) {
+			std::cout << "Processing shader: " << filePath << "\n";
+		}
+
+		// Extract and validate version
+		int shaderVersion = extractGLSLVersion(shaderCode);
+		if (shaderVersion > 0) {
 			highestGLSLVersion = std::max(highestGLSLVersion, shaderVersion);
 			if (maxGLSLVersion > 0 && shaderVersion > maxGLSLVersion) {
 				throw std::runtime_error("Error: Shader " + filePath + " uses GLSL version " + std::to_string(shaderVersion) + ", which exceeds the specified maximum version " + std::to_string(maxGLSLVersion) + ".");
 			}
 		}
 
-		// Remove #version directive completely
-		shaderCode = std::regex_replace(shaderCode, std::regex(R"(#version\s+\d+\s+(core)?\n)"), "");
+		removeGLSLVersionDirective(shaderCode);
 
-		Variables localVariableMap = extractUniformsAndInOut(shaderCode, globalUniformMap, globalInOutMap);
-		globalUniformMap.insert(localVariableMap.uniformMap.begin(), localVariableMap.uniformMap.end());
-		globalInOutMap.insert(localVariableMap.inOutMap.begin(), localVariableMap.inOutMap.end());
-
-		shaderCode = renameVariables(shaderCode, globalUniformMap);
-		shaderCode = renameVariables(shaderCode, globalInOutMap);
-		shaders[filePath] = shaderCode;
+		shaders[filePath] = extractExternals(shaderCode, globalUniformMap, globalInOutMap, verbose);
 	}
 }
 
@@ -100,7 +106,7 @@ int main(int argc, char** argv) {
 		size_t maxTokenSize = 0;
 
 		// Parse command-line arguments
-		parseArguments(argc, argv, outputPackFile, outputHeaderFile, outputCFile, maxGLSLVersion, shaderFiles, useCoreVersion, verbose, minTokenSize, maxTokenSize);
+		parseArguments(argc, argv, outputPackFile, outputHeaderFile, outputCFile, maxGLSLVersion, useCoreVersion, shaderFiles, minTokenSize, maxTokenSize, verbose);
 
 		std::unordered_map<std::string, std::string> shaders;
 		std::unordered_map<std::string, std::string> globalUniformMap;
@@ -108,7 +114,7 @@ int main(int argc, char** argv) {
 		int highestGLSLVersion = 0;
 
 		// Process shaders
-		processShaders(shaderFiles, maxGLSLVersion, shaders, globalUniformMap, globalInOutMap, highestGLSLVersion);
+		processShaders(shaderFiles, maxGLSLVersion, shaders, globalUniformMap, globalInOutMap, highestGLSLVersion, verbose);
 
 		// Determine the GLSL version to use
 		if (maxGLSLVersion == 0) maxGLSLVersion = highestGLSLVersion;
