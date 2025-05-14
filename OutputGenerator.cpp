@@ -74,6 +74,8 @@ std::string generateHeader(
 
 	headerContent << "#pragma once" << std::endl << std::endl;
 
+	headerContent << "#include <stddef.h>" << std::endl << std::endl;
+
 	headerContent << "enum ShaderOffset {" << std::endl;
 	for (const auto& [name, offset] : shaderOffsets) {
 		size_t pos1 = name.find_last_of('/');
@@ -193,7 +195,7 @@ std::string generateCFile(
 
 	cFileContent << std::endl;
 
-	cFileContent << getShaderSourceFromFileSrc;
+	cFileContent << getShaderSourceFromFileSrc << std::endl;
 
 	return cFileContent.str();
 }
