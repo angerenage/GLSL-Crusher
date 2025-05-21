@@ -65,7 +65,6 @@ char* getShaderSourceFromFile(const char* const compressedText, size_t offset) {
 	return decompressedText;
 })";
 
-// Function to generate header file for shaders
 std::string generateHeader(
 	const std::unordered_map<std::string, std::string>& variableMap,
 	const std::vector<std::pair<std::string, size_t>>& shaderOffsets
@@ -102,7 +101,6 @@ std::string generateHeader(
 	return headerContent.str();
 }
 
-// Function to generate the C file content for shaders
 std::string generateCFile(
 	const std::unordered_map<uint8_t, std::string>& tokenCharMap,
 	const std::unordered_map<std::string, std::string>& variableMap,
@@ -200,7 +198,6 @@ std::string generateCFile(
 	return cFileContent.str();
 }
 
-// Function to generate packed content for shaders
 std::vector<uint8_t> generatePackedContent(
 	const std::unordered_map<std::string, std::string>& shaders,
 	const std::unordered_map<uint16_t, std::string>& tokenList,

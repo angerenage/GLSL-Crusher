@@ -5,7 +5,23 @@
 #include "Token.h"
 #include "OutputGenerator.h"
 
-// Function to parse command-line arguments
+/**
+ * @brief Parse command-line arguments.
+ * 
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @param outputPackFile Output pack file path.
+ * @param outputHeaderFile Output header file path.
+ * @param outputCFile Output C file path.
+ * @param maxGLSLVersion Maximum GLSL version to used in unpacked shaders.
+ * @param useCoreVersion Flag to use core version of GLSL in unpacked shaders.
+ * @param shaderFiles List of shader file paths.
+ * @param minTokenSize Minimum token size for compression.
+ * @param maxTokenSize Maximum token size for compression.
+ * @param verbose Flag to enable verbose output.
+ * 
+ * @throws std::runtime_error if any argument is invalid or missing.
+ */
 void parseArguments(
 	int argc, char** argv,
 	std::string& outputPackFile, std::string& outputHeaderFile, std::string& outputCFile,
@@ -61,7 +77,17 @@ void parseArguments(
 	}
 }
 
-// Function to process shaders and extract relevant information
+/**
+ * @brief Process shaders and extract relevant information.
+ * 
+ * @param shaderFiles Shader file paths.
+ * @param maxGLSLVersion Maximum GLSL version to used in unpacked shaders.
+ * @param shaders Output map of shader file paths to their GLSL code.
+ * @param globalUniformMap Output map of global uniform variables.
+ * @param globalInOutMap Output map of global in/out variables.
+ * @param highestGLSLVersion Highest GLSL version found in the shaders.
+ * @param verbose Flag to enable verbose output.
+ */
 void processShaders(
 	const std::vector<std::string>& shaderFiles,
 	int maxGLSLVersion,
@@ -130,14 +156,14 @@ int main(int argc, char** argv) {
 			longestShaderLength = std::max(longestShaderLength, shader.second.length());
 		}
 
-		Tokens tokens = compress_texts(shaders, minTokenSize, maxTokenSize, verbose);
+		Tokens tokens = compressTexts(shaders, minTokenSize, maxTokenSize, verbose);
 
 		// Pass the GLSL version to the header generator
 		std::string glslVersionDirective = "#version " + std::to_string(maxGLSLVersion) + (useCoreVersion ? " core" : "");
 		std::vector<std::pair<std::string, size_t>> shadersOffsets;
 
 		// Generate the packed content for shaders and write it to the specified file
-		std::vector<uint8_t> packedContent = generatePackedContent(shaders, tokens.token_list, shadersOffsets);
+		std::vector<uint8_t> packedContent = generatePackedContent(shaders, tokens.tokenOffsetMap, shadersOffsets);
 		writeFile(outputPackFile, packedContent);
 		if (verbose) {
 			std::cout << outputPackFile << " generated with size: " << packedContent.size() << " bytes." << std::endl;
@@ -151,7 +177,7 @@ int main(int argc, char** argv) {
 		}
 
 		// Generate the C file content and write it to the specified file
-		std::string cFileContent = generateCFile(tokens.token_char_map, globalUniformMap, glslVersionDirective, longestShaderLength);
+		std::string cFileContent = generateCFile(tokens.tokenCharMap, globalUniformMap, glslVersionDirective, longestShaderLength);
 		writeFile(outputCFile, cFileContent);
 		if (verbose) {
 			std::cout << outputCFile << " generated." << std::endl;

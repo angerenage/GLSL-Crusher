@@ -5,25 +5,25 @@
 #include <string>
 #include <unordered_map>
 
-struct TokenInfo {
-	std::string token;
-	int score;
-};
-
+/**
+ * @struct Tokens
+ * @brief Holds mappings for compressed token representations.
+ */
 struct Tokens {
-	std::unordered_map<uint8_t, std::string> token_char_map;
-	std::unordered_map<uint16_t, std::string> token_list;
+	std::unordered_map<uint8_t, std::string> tokenCharMap; ///< Maps single-byte tokens to strings
+	std::unordered_map<uint16_t, std::string> tokenOffsetMap; ///< Maps 16-bit offset tokens to strings
 };
 
-TokenInfo find_best_token(
-	const std::unordered_map<std::string, std::string>& texts,
-	bool find_large,
-	size_t minTokenSize,
-	size_t maxTokenSize,
-	bool verbose
-);
-
-Tokens compress_texts(
+/**
+ * @brief Compresses a set of texts by finding and replacing repeated substrings with tokens.
+ *
+ * @param texts Map of text identifiers to their string contents. Modified in-place with compressed results.
+ * @param minTokenSize Minimum length of substrings to consider as tokens.
+ * @param maxTokenSize Maximum length of substrings to consider as tokens.
+ * @param verbose If true, enables verbose output for debugging and analysis.
+ * @return A Tokens struct containing the mappings of tokens to their string representations.
+ */
+Tokens compressTexts(
 	std::unordered_map<std::string, std::string>& texts,
 	size_t minTokenSize,
 	size_t maxTokenSize,

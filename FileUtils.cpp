@@ -5,7 +5,6 @@
 #include <filesystem>
 #include <string>
 
-// Function to read content from a file to a string
 std::string readFile(const std::string& filePath) {
 	std::ifstream file(filePath);
 	if (!file.is_open()) {
@@ -26,7 +25,6 @@ std::string readFile(const std::string& filePath) {
 	return content;
 }
 
-// Function to write a string to a file
 void writeFile(const std::string& filePath, const std::string& content) {
 	std::ofstream file(filePath);
 	if (!file) {
@@ -35,7 +33,6 @@ void writeFile(const std::string& filePath, const std::string& content) {
 	file << content;
 }
 
-// Function to write binary content to a file
 void writeFile(const std::string& filePath, const std::vector<uint8_t>& content) {
 	std::ofstream file(filePath, std::ios::binary);
 	if (!file) {

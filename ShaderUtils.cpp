@@ -5,7 +5,6 @@
 #include <unordered_set>
 #include <stack>
 
-// Extracts and renames external variables, uniforms, ins and outs, in GLSL code
 std::string extractExternals(
 	std::string code,
 	std::unordered_map<std::string, std::string>& globalUniformMap,
@@ -143,7 +142,6 @@ std::string extractExternals(
 	return output;
 }
 
-// Retrieves the GLSL version directive position from shader code
 int extractGLSLVersion(const std::string& code) {
 	size_t pos = code.find("#version");
 	if (pos == std::string::npos) return 0;
@@ -158,7 +156,6 @@ int extractGLSLVersion(const std::string& code) {
 	return std::stoi(code.substr(start, pos - start));
 }
 
-// Removes the GLSL version directive from shader code
 void removeGLSLVersionDirective(std::string& code) {
 	size_t pos = code.find("#version");
 	if (pos == std::string::npos) return;
